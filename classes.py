@@ -29,13 +29,16 @@ class Whisperer:
         self.language = language
         self.device = device
         self.model_name = model_name
+        self.model = None
 
     def init_model(self):
+        logging.info(f"Loading model {self.model_name} on {self.device}")
         self.model = whisper.load_model(name=self.model_name, device=self.device, download_root='models')
+        logging.info(f"Loaded model {self.model_name} on {self.device}")
 
     def transcribe(self, audio_file):
         tic = time.time()
-        res = self.whisper_model.transcribe(
+        res = self.model.transcribe(
             audio_file, task="transcribe", language=self.language, verbose=True, word_timestamps=True
         )
         logging.info(f"Done transcription in {time.time() - tic:.1f} sec")
@@ -89,7 +92,35 @@ class Video:
         logging.info(f"Saved subtitles for {self.path}")
 
 
+def setup_logging():
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    class ColorizedHandler(logging.StreamHandler):
+        def emit(self, record):
+            if record.levelno == logging.ERROR:
+                color_prefix = '\033[91m'
+            else:
+                color_prefix = '\033[0m'
+            record.msg = f"{color_prefix}{record.msg}\033[0m"
+            super().emit(record)
+
+    console_handler = ColorizedHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    file_handler = logging.FileHandler('pyscribe.log')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+
 def main():
+    setup_logging()
+
+    logging.info("This is an info message.")
+    logging.error("This is an error message.")
 
     # Init Whisperer
     whisperer = Whisperer()
@@ -108,3 +139,7 @@ def main():
         video = Video(video_path, output_path)
         video.generate_subtitles(whisperer)
         logging.info(f"Processed video {video} in {time.time() - tic:.1f} sec")
+
+
+if __name__ == "__main__":
+    main()
