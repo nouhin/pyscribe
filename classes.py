@@ -8,8 +8,8 @@ import torch
 import whisper
 
 source_folder = 'video_input'
-output_folder = 'subs_output'
-model = 'medium'
+output_folder = 'subs_out'
+model = 'small'
 language = 'french'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -36,11 +36,21 @@ class Whisperer:
         self.model = whisper.load_model(name=self.model_name, device=self.device, download_root='models')
         logging.info(f"Loaded model {self.model_name} on {self.device}")
 
-    def transcribe(self, audio_file):
+    def transcribe(self, audio_file, context=None):
         tic = time.time()
-        res = self.model.transcribe(
-            audio_file, task="transcribe", language=self.language, verbose=True, word_timestamps=True
-        )
+        if context:
+            res = self.model.transcribe(
+                audio_file,
+                task="transcribe",
+                language=self.language,
+                verbose=True,
+                word_timestamps=True,
+                initial_prompt=context
+            )
+        else:
+            res = self.model.transcribe(
+                audio_file, task="transcribe", language=self.language, verbose=True, word_timestamps=True
+            )
         logging.info(f"Done transcription in {time.time() - tic:.1f} sec")
         return res
 
@@ -54,6 +64,7 @@ class Video:
         self.audio_sample_rate = 16000
         self.audio = None
         self.subtitles = None
+        self.context = None
 
     def get_audio(self):
         logging.info(f"Loading audio from {self.path}")
@@ -75,7 +86,7 @@ class Video:
         if self.audio is None:
             self.get_audio()
         try:
-            self.subtitles = transcriber.transcribe(self.audio)
+            self.subtitles = transcriber.transcribe(self.audio, context=self.context)
             self.save_subtitles()
             logging.info(f"Generated subtitles for {self.path}")
         except Exception as e:
@@ -87,7 +98,9 @@ class Video:
         if self.subtitles is None:
             logging.error("No subtitles to save")
             raise RuntimeError("No subtitles to save")
-        with open(self.output_path, "w") as f:
+        # create output folder if it doesn't exist
+        os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
+        with open(self.output_path, 'w') as f:
             f.write(self.subtitles)
         logging.info(f"Saved subtitles for {self.path}")
 
@@ -130,6 +143,13 @@ def main():
     videos = [f for f in os.listdir(source_folder) if f.endswith('.mp4')]
     logging.info(f"Found {len(videos)} videos to process")
 
+    # read context from file
+    try:
+        with open('context.txt', 'r') as f:
+            context = f.read()
+    except FileNotFoundError:
+        context = None
+
     # Process videos
     for video in videos:
         tic = time.time()
@@ -137,6 +157,7 @@ def main():
         video_path = os.path.join(source_folder, video)
         output_path = os.path.join(output_folder, video.replace('.mp4', '.srt'))
         video = Video(video_path, output_path)
+        video.context = context
         video.generate_subtitles(whisperer)
         logging.info(f"Processed video {video} in {time.time() - tic:.1f} sec")
 
