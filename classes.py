@@ -7,10 +7,11 @@ import ffmpeg
 import numpy as np
 import torch
 import whisper
+import whisper.utils
 
 source_folder = 'video_input'
 output_folder = 'subs_out'
-model = 'small'
+model = 'medium'
 language = 'french'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -61,9 +62,11 @@ class Whisperer:
 
 # Create video class
 class Video:
-    def __init__(self, path, output_path=None, context=None):
+    def __init__(self, path, s_out='subs_out', r_out=None, context=None, save_raw=False) -> None:
         self.path = path
-        self.output_path = output_path
+        self.output_path = s_out
+        self.raw_output_path = r_out
+        self.save_raw_flag = save_raw
         self.path = path
         self.audio_sample_rate = 16000
         self.audio = None
@@ -91,25 +94,35 @@ class Video:
             self.get_audio()
         try:
             self.subtitles = transcriber.transcribe(self.audio, context=self.context)
+            if self.save_raw_flag:
+                self.save_raw()
             self.save_subtitles()
             logging.info(f"Generated subtitles for {self.path}")
         except Exception as e:
             logging.error(f"Failed to generate subtitles: {e}")
             raise RuntimeError(f"Failed to generate subtitles: {e}") from e
 
-    def save_subtitles(self):
-        logging.info(f"Saving subtitles for {self.path}")
+    def save_raw(self):
+        logging.info(f"Saving raw output for {self.path}")
         if self.subtitles is None:
             logging.error("No subtitles to save")
             raise RuntimeError("No subtitles to save")
-        if self.output_path is None:
-            self.output_path = 'subtitle_output'
+        if self.raw_output_path is None:
+            self.raw_output_path = os.path.join(self.output_path, self.path.replace('.mp4', '.raw'))
         # create output folder if it doesn't exist
-        os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
-        with open(self.output_path, 'w') as f:
+        os.makedirs(os.path.dirname(self.raw_output_path), exist_ok=True)
+        with open(self.raw_output_path, 'w') as f:
             # serialize subtitles with json
             json.dump(self.subtitles, f, indent=4)
-        logging.info(f"Saved subtitles for {self.path}")
+        logging.info(f"Saved raw output for {self.path}")
+
+    def save_subtitles(self):
+        logging.info(f"Saving subtitles for {self.path}")
+
+        srt_writer = whisper.utils.get_writer("srt", self.output_path)
+        logging.info(f"Saving subtitles for {self.path} to {self.output_path}")
+        with open(self.output_path, "w", encoding="utf-8") as f:
+            srt_writer(self.subtitles, f, {"max_line_width": 47, "max_line_count": 1, "highlight_words": False})
 
 
 def setup_logging():
@@ -145,8 +158,11 @@ def main():
     whisperer = Whisperer()
     whisperer.init_model()
 
-    # get list of videos
-    videos = [f for f in os.listdir(source_folder) if f.endswith('.mp4')]
+    # get list of videos in source folder , extension .mp4 mkv
+    videos = [
+        f for f in os.listdir(source_folder)
+        if os.path.isfile(os.path.join(source_folder, f)) and (f.endswith('.mp4') or f.endswith('.mkv'))
+    ]
     logging.info(f"Found {len(videos)} videos to process")
 
     # read context from file
@@ -161,8 +177,9 @@ def main():
         tic = time.time()
         logging.info(f"Processing video {video}")
         video_path = os.path.join(source_folder, video)
-        output_path = os.path.join(output_folder, video.replace('.mp4', '.srt'))
-        video = Video(video_path, output_path)
+        raw_output_path = os.path.join(output_folder, video.replace('.mp4', '.raw'))
+        subs_output_path = os.path.join(output_folder, video.replace('.mp4', '.txt'))
+        video = Video(video_path, save_raw=True, r_out=raw_output_path, s_out=subs_output_path)
         video.context = context
         video.generate_subtitles(whisperer)
         logging.info(f"Processed video {video} in {time.time() - tic:.1f} sec")
