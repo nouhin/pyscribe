@@ -121,8 +121,17 @@ class Video:
 
         srt_writer = whisper.utils.get_writer("srt", self.output_path)
         logging.info(f"Saving subtitles for {self.path} to {self.output_path}")
-        with open(self.output_path, "w", encoding="utf-8") as f:
-            srt_writer(self.subtitles, f, {"max_line_width": 47, "max_line_count": 1, "highlight_words": False})
+        # with open(self.output_path, "w", encoding="utf-8") as f:
+        #     srt_writer(self.subtitles, f, {"max_line_width": 47, "max_line_count": 1, "highlight_words": False})
+        srt_writer(
+            self.subtitles,
+            self.output_path,  # type: ignore
+            {
+                "max_line_width": 47,
+                "max_line_count": 1,
+                "highlight_words": False
+            }
+        )
 
 
 def setup_logging():
