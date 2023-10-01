@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import time
@@ -24,19 +25,22 @@ print('Device: {}'.format(device))
 
 
 class Whisperer:
-    def __init__(self, output_folder=output_folder, language=language, device=device, model_name=model):
+    def __init__(self, output_folder=output_folder, language=language, device=device, model_name=model) -> None:
         self.output_folder = output_folder
         self.language = language
         self.device = device
         self.model_name = model_name
-        self.model = None
+        self.model: whisper.Whisper
 
-    def init_model(self):
+    def init_model(self) -> None:
         logging.info(f"Loading model {self.model_name} on {self.device}")
         self.model = whisper.load_model(name=self.model_name, device=self.device, download_root='models')
         logging.info(f"Loaded model {self.model_name} on {self.device}")
 
-    def transcribe(self, audio_file, context=None):
+    def transcribe(self, audio_file, context=None) -> dict[str, str | list]:
+        if model is None:
+            logging.error("Model not initialized")
+            raise RuntimeError("Model not initialized")
         tic = time.time()
         if context:
             res = self.model.transcribe(
@@ -57,14 +61,14 @@ class Whisperer:
 
 # Create video class
 class Video:
-    def __init__(self, path, output_path='None'):
+    def __init__(self, path, output_path=None, context=None):
         self.path = path
         self.output_path = output_path
         self.path = path
         self.audio_sample_rate = 16000
         self.audio = None
-        self.subtitles = None
-        self.context = None
+        self.subtitles: dict[str, str | list]
+        self.context: str | None = context
 
     def get_audio(self):
         logging.info(f"Loading audio from {self.path}")
@@ -98,10 +102,13 @@ class Video:
         if self.subtitles is None:
             logging.error("No subtitles to save")
             raise RuntimeError("No subtitles to save")
+        if self.output_path is None:
+            self.output_path = 'subtitle_output'
         # create output folder if it doesn't exist
         os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
         with open(self.output_path, 'w') as f:
-            f.write(self.subtitles)
+            # serialize subtitles with json
+            json.dump(self.subtitles, f, indent=4)
         logging.info(f"Saved subtitles for {self.path}")
 
 
@@ -112,13 +119,12 @@ def setup_logging():
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     class ColorizedHandler(logging.StreamHandler):
-        def emit(self, record):
+        def format(self, record):
             if record.levelno == logging.ERROR:
                 color_prefix = '\033[91m'
-            else:
-                color_prefix = '\033[0m'
-            record.msg = f"{color_prefix}{record.msg}\033[0m"
-            super().emit(record)
+                color_suffix = '\033[0m'
+                record.msg = f"{color_prefix}{record.msg}{color_suffix}"
+            return super().format(record)
 
     console_handler = ColorizedHandler()
     console_handler.setFormatter(formatter)
