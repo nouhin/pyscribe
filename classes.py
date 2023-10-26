@@ -9,82 +9,71 @@ import torch
 import whisper
 import whisper.utils
 
-source_folder = Path('video_input')
-output_folder = Path('subs_out')
-model = 'medium'
-language = 'french'
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Constants
+SOURCE_FOLDER = Path('video_input')
+OUTPUT_FOLDER = Path('subs_out')
+MODEL = 'medium'
+LANGUAGE = 'french'
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 #####################################################################
 
 print('Current configuration:')
-print(f'Source folder: {source_folder}')
-print(f'Output folder: {output_folder}')
-print(f'Model: {model}')
-print(f'Language: {language}')
-print(f'Device: {device}')
+print(f'Source folder: {SOURCE_FOLDER}')
+print(f'Output folder: {OUTPUT_FOLDER}')
+print(f'Model: {MODEL}')
+print(f'Language: {LANGUAGE}')
+print(f'Device: {DEVICE}')
 
 
 class Whisperer:
-    def __init__(self, output_folder=output_folder, language=language, device=device, model_name=model) -> None:
+    def __init__(self, output_folder=OUTPUT_FOLDER, language=LANGUAGE, device=DEVICE, model_name=MODEL) -> None:
         self.output_folder = output_folder
         self.language = language
         self.device = device
         self.model_name = model_name
-        self.model: whisper.Whisper
+        self.model = None
+        self.init_model()
 
-    def init_model(self) -> None:
+    def init_model(self):
         logging.info(f"Loading model {self.model_name} on {self.device}")
         self.model = whisper.load_model(name=self.model_name, device=self.device, download_root='models')
         logging.info(f"Loaded model {self.model_name} on {self.device}")
 
     def transcribe(self, audio_file, context=None) -> dict[str, str | list]:
-        if model is None:
+        if self.model is None:
             logging.error("Model not initialized")
             raise RuntimeError("Model not initialized")
         tic = time.time()
+        options = {"task": "transcribe", "language": self.language, "verbose": True, "word_timestamps": True}
         if context:
-            res = self.model.transcribe(
-                audio_file,
-                task="transcribe",
-                language=self.language,
-                verbose=True,
-                word_timestamps=True,
-                initial_prompt=context,
-            )
-        else:
-            res = self.model.transcribe(
-                audio_file, task="transcribe", language=self.language, verbose=True, word_timestamps=True
-            )
-        logging.info(f"Done transcription in {time.time() - tic:.1f} sec")
-        return res
+            options["initial_prompt"] = context
+        result = self.model.transcribe(audio_file, **options)
+        logging.info(f"Completed transcription in {time.time() - tic:.1f} sec")
+        return result
 
 
-# Create video class
-class Video:
-    def __init__(self, path, s_out=None, r_out=None, context=None, save_raw=False) -> None:
-        self.path: Path = path
-        self.output_path: Path = Path(s_out) if s_out else Path('subs_out')
-        self.raw_output_path: Path = Path(r_out) if r_out else Path('subs_out')
+class Media:
+    def __init__(self, path, s_out=None, r_out=None, context=None, save_raw=False):
+        self.path = Path(path)
+        self.output_path = Path(s_out) if s_out else OUTPUT_FOLDER
+        self.raw_output_path = Path(r_out) if r_out else OUTPUT_FOLDER
         self.save_raw_flag = save_raw
         self.audio_sample_rate = 16000
         self.audio = None
-        self.subtitles: dict[str, str | list] | None = None
-        self.context: str | None = context
+        self.subtitles = None
+        self.context = context
 
     def get_audio(self):
-        logging.info(f"Loading audio from {self.path}")
+        logging.info(f"Extracting audio from {self.path}")
         try:
-            out, _ = (
-                ffmpeg.input(self.path, threads=0).output(
-                    "-", format="s16le", acodec="pcm_s16le", ac=1, ar=self.audio_sample_rate
-                ).run(cmd=["ffmpeg", "-nostdin"], capture_stdout=True, capture_stderr=True)
-            )
+            out, _ = ffmpeg.input(self.path, threads=0).output(
+                "-", format="s16le", acodec="pcm_s16le", ac=1, ar=self.audio_sample_rate
+            ).run(cmd=["ffmpeg", "-nostdin"], capture_stdout=True, capture_stderr=True)
             self.audio = np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
-            logging.info(f"Loaded audio from {self.path}")
         except ffmpeg.Error as e:
-            logging.error(f"Failed to load audio: {e.stderr.decode()}")
-            raise RuntimeError(f"Failed to load audio: {e.stderr.decode()}") from e
+            logging.error(f"Failed to extract audio: {e.stderr.decode()}")
+            raise RuntimeError(f"Failed to extract audio: {e.stderr.decode()}") from e
 
     def generate_subtitles(self, transcriber):
         logging.info(f"Generating subtitles for {self.path}")
@@ -150,11 +139,11 @@ def setup_logging():
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     class ColorizedHandler(logging.StreamHandler):
+        COLORS = {logging.ERROR: ('\033[91m', '\033[0m')}
+
         def format(self, record):
-            if record.levelno == logging.ERROR:
-                color_prefix = '\033[91m'
-                color_suffix = '\033[0m'
-                record.msg = f"{color_prefix}{record.msg}{color_suffix}"
+            color_prefix, color_suffix = self.COLORS.get(record.levelno, ('', ''))
+            record.msg = f"{color_prefix}{record.msg}{color_suffix}"
             return super().format(record)
 
     console_handler = ColorizedHandler()
@@ -177,7 +166,7 @@ def main():
     whisperer.init_model()
 
     # get list of videos in source folder, extension .mp4 mkv
-    videos = [f for f in source_folder.iterdir() if f.is_file() and f.suffix in ['.mp4', '.mkv']]
+    videos = [f for f in SOURCE_FOLDER.iterdir() if f.is_file() and f.suffix in ['.mp4', '.mkv']]
     logging.info(f"Found {len(videos)} videos to process")
 
     # read context from file
@@ -188,7 +177,7 @@ def main():
     for video in videos:
         tic = time.time()
         logging.info(f"Processing video {video.name}")
-        video_obj = Video(video, save_raw=True)
+        video_obj = Media(video, save_raw=True)
         video_obj.context = context
         video_obj.generate_subtitles(whisperer)
         logging.info(f"Processed video {video.name} in {time.time() - tic:.1f} sec")
