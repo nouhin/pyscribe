@@ -9,29 +9,64 @@ import torch
 import whisper
 import whisper.utils
 
-# Constants
-SOURCE_FOLDER = Path('video_input')
-OUTPUT_FOLDER = Path('subs_out')
-MODEL = 'medium'
-LANGUAGE = 'french'
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# # Constants
+# SOURCE_FOLDER = Path('video_input')
+# OUTPUT_FOLDER = Path('subs_out')
+# MODEL = 'medium'
+# LANGUAGE = 'french'
+# DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-#####################################################################
+# #####################################################################
 
-print('Current configuration:')
-print(f'Source folder: {SOURCE_FOLDER}')
-print(f'Output folder: {OUTPUT_FOLDER}')
-print(f'Model: {MODEL}')
-print(f'Language: {LANGUAGE}')
-print(f'Device: {DEVICE}')
+# print('Current configuration:')
+# print(f'Source folder: {SOURCE_FOLDER}')
+# print(f'Output folder: {OUTPUT_FOLDER}')
+# print(f'Model: {MODEL}')
+# print(f'Language: {LANGUAGE}')
+# print(f'Device: {DEVICE}')
+
+
+class Config:
+    DEFAULTS = {
+        "source_folder": "video_input",
+        "output_folder": "subs_out",
+        "model": "medium",
+        "language": "french",
+        "use_cuda": True
+    }
+
+    def __init__(self, config_file=None):
+        self.config = self.DEFAULTS.copy()
+        if config_file is not None and Path(config_file).exists():
+            self.load(config_file)
+
+    def load(self, config_file):
+        with open(config_file, 'r') as file:
+            file_config = json.load(file)
+            self.config.update(file_config)
+
+    def __getattr__(self, item):
+        return self.config.get(item)
+
+    def __setattr__(self, key, value):
+        self.config[key] = value
+
+    def print_config(self):
+        print("Current configuration:")
+        for key, value in self.config.items():
+            print(f"{key}: {value}")
+
+    @property
+    def device(self):
+        return torch.device('cuda' if torch.cuda.is_available() and self.config['use_cuda'] else 'cpu')
 
 
 class Whisperer:
-    def __init__(self, output_folder=OUTPUT_FOLDER, language=LANGUAGE, device=DEVICE, model_name=MODEL) -> None:
-        self.output_folder = output_folder
-        self.language = language
-        self.device = device
-        self.model_name = model_name
+    def __init__(self, config) -> None:
+        self.output_folder = config.output_folder
+        self.language = config.language
+        self.device = config.device
+        self.model_name = config.model
         self.model = None
         self.init_model()
 
@@ -54,10 +89,10 @@ class Whisperer:
 
 
 class Media:
-    def __init__(self, path, s_out=None, r_out=None, context=None, save_raw=False):
+    def __init__(self, path, config, r_out=None, context=None, save_raw=False):
         self.path = Path(path)
-        self.output_path = Path(s_out) if s_out else OUTPUT_FOLDER
-        self.raw_output_path = Path(r_out) if r_out else OUTPUT_FOLDER
+        self.output_path = Path(config.output_folder)
+        self.raw_output_path = Path(r_out) if r_out else self.output_path
         self.save_raw_flag = save_raw
         self.audio_sample_rate = 16000
         self.audio = None
@@ -155,33 +190,26 @@ def setup_logging():
     logger.addHandler(file_handler)
 
 
-def main():
+# Usage Example
+if __name__ == "__main__":
+    # Setup logging
     setup_logging()
 
     logging.info("This is an info message.")
     logging.error("This is an error message.")
 
-    # Init Whisperer
-    whisperer = Whisperer()
-    whisperer.init_model()
-
-    # get list of videos in source folder, extension .mp4 mkv
-    videos = [f for f in SOURCE_FOLDER.iterdir() if f.is_file() and f.suffix in ['.mp4', '.mkv']]
-    logging.info(f"Found {len(videos)} videos to process")
+    # Initialize configuration
+    config = Config('config.json')  # Assuming a file named 'config.json'
+    config.print_config()
 
     # read context from file
     context_file = Path('context.txt')
     context = context_file.read_text() if context_file.exists() else None
 
-    # Process videos
-    for video in videos:
-        tic = time.time()
-        logging.info(f"Processing video {video.name}")
-        video_obj = Media(video, save_raw=True)
-        video_obj.context = context
-        video_obj.generate_subtitles(whisperer)
-        logging.info(f"Processed video {video.name} in {time.time() - tic:.1f} sec")
-
-
-if __name__ == "__main__":
-    main()
+    # Initialize Whisperer and Media with configuration
+    whisperer = Whisperer(config)
+    video_file = "example.mp4"
+    media = Media(path=video_file, config=config, context=context, save_raw=True)
+    tic = time.time()
+    media.generate_subtitles(whisperer)
+    logging.info(f"Processed video {video_file} in {time.time() - tic:.1f} sec")
