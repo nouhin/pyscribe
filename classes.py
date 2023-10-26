@@ -36,7 +36,8 @@ class Config:
     }
 
     def __init__(self, config_file=None):
-        self.config = self.DEFAULTS.copy()
+        # Directly set the attribute to avoid recursion
+        self.__dict__['config'] = self.DEFAULTS.copy()
         if config_file is not None and Path(config_file).exists():
             self.load(config_file)
 
@@ -46,13 +47,14 @@ class Config:
             self.config.update(file_config)
 
     def __getattr__(self, item):
-        return self.config.get(item)
+        # Access the 'config' dictionary directly to avoid recursion
+        return self.__dict__['config'].get(item)
 
     def __setattr__(self, key, value):
-        self.config[key] = value
+        # Modify 'config' dictionary directly
+        self.__dict__['config'][key] = value
 
     def print_config(self):
-        print("Current configuration:")
         for key, value in self.config.items():
             print(f"{key}: {value}")
 
