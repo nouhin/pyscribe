@@ -27,40 +27,37 @@ import whisper.utils
 
 
 class Config:
-    DEFAULTS = {
-        "source_folder": "video_input",
-        "output_folder": "subs_out",
-        "model": "medium",
-        "language": "french",
-        "use_cuda": True
-    }
-
     def __init__(self, config_file=None):
-        # Directly set the attribute to avoid recursion
-        self.__dict__['config'] = self.DEFAULTS.copy()
-        if config_file is not None and Path(config_file).exists():
+        # Default values
+        self.source_folder = "video_input"
+        self.output_folder = "subs_out"
+        self.model = "medium"
+        self.language = "french"
+        self.use_cuda = True
+
+        # Load from file if provided
+        if config_file and Path(config_file).exists():
             self.load(config_file)
 
     def load(self, config_file):
         with open(config_file, 'r') as file:
             file_config = json.load(file)
-            self.config.update(file_config)
+            for key, value in file_config.items():
+                if hasattr(self, key):
+                    setattr(self, key, value)
 
-    def __getattr__(self, item):
-        # Access the 'config' dictionary directly to avoid recursion
-        return self.__dict__['config'].get(item)
-
-    def __setattr__(self, key, value):
-        # Modify 'config' dictionary directly
-        self.__dict__['config'][key] = value
+    def save(self, config_file):
+        with open(config_file, 'w') as file:
+            config_data = {key: getattr(self, key) for key in self.__dict__}
+            json.dump(config_data, file, indent=4)
 
     def print_config(self):
-        for key, value in self.config.items():
+        for key, value in self.__dict__.items():
             print(f"{key}: {value}")
 
     @property
     def device(self):
-        return torch.device('cuda' if torch.cuda.is_available() and self.config['use_cuda'] else 'cpu')
+        return torch.device('cuda' if torch.cuda.is_available() and self.use_cuda else 'cpu')
 
 
 class Whisperer:
