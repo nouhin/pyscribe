@@ -185,3 +185,4 @@ poetry.toml
 pyrightconfig.json
 models/*
 context.txt
+*.json

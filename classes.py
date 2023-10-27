@@ -5,6 +5,8 @@ from pathlib import Path
 
 import ffmpeg
 import numpy as np
+import openai
+import tiktoken
 import torch
 import whisper
 import whisper.utils
@@ -15,15 +17,110 @@ import whisper.utils
 # MODEL = 'medium'
 # LANGUAGE = 'french'
 # DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
 # #####################################################################
-
 # print('Current configuration:')
 # print(f'Source folder: {SOURCE_FOLDER}')
 # print(f'Output folder: {OUTPUT_FOLDER}')
 # print(f'Model: {MODEL}')
 # print(f'Language: {LANGUAGE}')
 # print(f'Device: {DEVICE}')
+
+
+class ChatGPTHAndler():
+    """Handler for ChatGPT API calls."""
+
+    PRICING = {
+        'gpt-3.5-turbo': {
+            'prompt': 0.0015,
+            'completion': 0.002
+        },
+        'gpt-3.5-turbo-16k': {
+            'prompt': 0.003,
+            'completion': 0.004
+        },
+        'gpt-4': {
+            'prompt': 0.03,
+            'completion': 0.06
+        },
+        'gpt-4-32k': {
+            'prompt': 0.06,
+            'completion': 0.12
+        },
+    }
+
+    def __init__(self, config):
+        self.token = config.token
+        openai.api_key = self.token
+        self.model = config.gpt_model
+        self.prompt = config.default_prompt.replace("{lang}", config.language)
+        self.output_folder = Path(config.output_folder)
+        if not self.output_folder.exists():
+            self.output_folder.mkdir(parents=True)
+
+    def token_count(self, messages):
+        """Calculate and return the number of tokens for the given messages."""
+        encoding = self._get_encoding()
+        num_tokens = sum(self._count_tokens(message, encoding) for message in messages)
+        num_tokens += 3  # Priming with assistant
+        return num_tokens
+
+    def _get_encoding(self):
+        """Get the appropriate encoding for the model."""
+        try:
+            return tiktoken.encoding_for_model(self.model)
+        except KeyError:
+            logging.warning("Model not found. Using cl100k_base encoding.")
+            return tiktoken.get_encoding("cl100k_base")
+
+    def _count_tokens(self, message, encoding):
+        """Count the tokens for a single message."""
+        tokens_per_message = self._get_tokens_per_message()
+        num_tokens = tokens_per_message
+        for key, value in message.items():
+            num_tokens += len(encoding.encode(value))
+            if key == "name":
+                num_tokens += tokens_per_message - 2
+        return num_tokens
+
+    def _get_tokens_per_message(self):
+        """Get the number of tokens per message based on the model."""
+        if "gpt-3.5-turbo" in self.model:
+            return 3
+        elif "gpt-4" in self.model:
+            return 3
+        else:
+            raise NotImplementedError(f"num_tokens_from_messages() is not implemented for model {self.model}.")
+
+    def get_prompt(self, media):
+        """Generate a prompt from media subtitles."""
+        transcript = media.subtitles['text']
+        return self.prompt + transcript
+
+    def process_media(self, media):
+        """Process media and generate GPT summary."""
+        try:
+            messages = [{"role": "user", "content": self.get_prompt(media)}]
+            response = openai.ChatCompletion.create(model=self.model, messages=messages)
+
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            with open(self.output_folder / f"{media.path.stem}_gpt_{timestamp}.json", "w") as f:
+                json.dump(response, f)
+
+            self._log_summary_and_costs(response, media)
+        except Exception as e:
+            logging.error(f"Error processing media: {e}")
+
+    def _log_summary_and_costs(self, response, media):
+        """Log the summary and costs of the GPT response."""
+        print("ChatGPT summary:")
+        print(response["choices"][0]["message"]["content"])
+
+        prompt_cost = response['usage']['prompt_tokens'] * self.PRICING[self.model]['prompt'] / 1000
+        completion_cost = response['usage']['completion_tokens'] * self.PRICING[self.model]['completion'] / 1000
+        total_cost = prompt_cost + completion_cost
+
+        logging.info(f"GPT summary generated for {media.path}")
+        logging.info(f"Total cost: {total_cost} dollars")
 
 
 class Config:
@@ -45,6 +142,8 @@ class Config:
             for key, value in file_config.items():
                 if hasattr(self, key):
                     setattr(self, key, value)
+                else:  # add new key
+                    self.__dict__[key] = value
 
     def save(self, config_file):
         with open(config_file, 'w') as file:
@@ -62,7 +161,6 @@ class Config:
 
 class Whisperer:
     def __init__(self, config) -> None:
-        self.output_folder = config.output_folder
         self.language = config.language
         self.device = config.device
         self.model_name = config.model
@@ -79,7 +177,13 @@ class Whisperer:
             logging.error("Model not initialized")
             raise RuntimeError("Model not initialized")
         tic = time.time()
-        options = {"task": "transcribe", "language": self.language, "verbose": True, "word_timestamps": True}
+        options = {
+            "task": "transcribe",
+            "language": self.language,
+            "verbose": True,
+            "word_timestamps": True,
+            "fp16": False
+        }
         if context:
             options["initial_prompt"] = context
         result = self.model.transcribe(audio_file, **options)
@@ -128,8 +232,8 @@ class Media:
         if self.subtitles is None:
             logging.error("No subtitles to save")
             raise RuntimeError("No subtitles to save")
-
-        raw_output_path = self.raw_output_path / f"{self.path.stem}.json"
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        raw_output_path = self.raw_output_path / f"{self.path.stem}_raw_{timestamp}.json"
         raw_output_path.parent.mkdir(parents=True, exist_ok=True)
 
         with raw_output_path.open('w') as f:
@@ -190,25 +294,57 @@ def setup_logging():
 
 
 # Usage Example
+# # Setup logging
+# setup_logging()
+
+# logging.info("This is an info message.")
+# logging.error("This is an error message.")
+
+# # Initialize configuration
+# config = Config('config.json')  # Assuming a file named 'config.json'
+# config.print_config()
+
+# # read context from file
+# context_file = Path('context.txt')
+# context = context_file.read_text() if context_file.exists() else None
+
+# # Initialize Whisperer and Media with configuration
+# whisperer = Whisperer(config)
+# video_file = "example.mp4"
+# media = Media(path=video_file, config=config, context=context, save_raw=True)
+# tic = time.time()
+# media.generate_subtitles(whisperer)
+# logging.info(f"Processed video {video_file} in {time.time() - tic:.1f} sec")
+
 if __name__ == "__main__":
-    # Setup logging
     setup_logging()
 
     logging.info("This is an info message.")
     logging.error("This is an error message.")
 
-    # Initialize configuration
-    config = Config('config.json')  # Assuming a file named 'config.json'
+    config = Config()
+    config.load('key.json')
+    config.load('config.json')
+
     config.print_config()
 
-    # read context from file
     context_file = Path('context.txt')
     context = context_file.read_text() if context_file.exists() else None
 
-    # Initialize Whisperer and Media with configuration
+    # Init Whisperer and gpt
     whisperer = Whisperer(config)
-    video_file = "example.mp4"
-    media = Media(path=video_file, config=config, context=context, save_raw=True)
-    tic = time.time()
-    media.generate_subtitles(whisperer)
-    logging.info(f"Processed video {video_file} in {time.time() - tic:.1f} sec")
+    gpt = ChatGPTHAndler(config)
+
+    # get list of videos in source folder, extension .mp4 mkv
+    source_folder = Path(config.source_folder)
+    videos = [f for f in source_folder.iterdir() if f.is_file() and f.suffix in [".mp4", ".mkv"]]
+    logging.info(f"Found {len(videos)} videos to process")
+
+    # Process videos
+    for video in videos:
+        tic = time.time()
+        logging.info(f"Processing video {video.name}")
+        video_obj = Media(path=video, config=config, context=context, save_raw=True)
+        video_obj.generate_subtitles(whisperer)
+        gpt.process_media(video_obj)
+        logging.info(f"Processed video {video.name} in {time.time() - tic:.1f} sec")
