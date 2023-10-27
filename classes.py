@@ -170,7 +170,6 @@ class Whisperer:
     def init_model(self):
         logging.info(f"Loading model {self.model_name} on {self.device}")
         self.model = whisper.load_model(name=self.model_name, device=self.device, download_root='models')
-        logging.info(f"Loaded model {self.model_name} on {self.device}")
 
     def transcribe(self, audio_file, context=None) -> dict[str, str | list]:
         if self.model is None:
@@ -203,7 +202,7 @@ class Media:
         self.context = context
 
     def get_audio(self):
-        logging.info(f"Extracting audio from {self.path}")
+        logging.info("Extracting audio ...")
         try:
             out, _ = ffmpeg.input(self.path, threads=0).output(
                 "-", format="s16le", acodec="pcm_s16le", ac=1, ar=self.audio_sample_rate
@@ -214,7 +213,7 @@ class Media:
             raise RuntimeError(f"Failed to extract audio: {e.stderr.decode()}") from e
 
     def generate_subtitles(self, transcriber):
-        logging.info(f"Generating subtitles for {self.path}")
+        logging.info("Generating subtitles ...")
         if self.audio is None:
             self.get_audio()
         try:
@@ -222,13 +221,12 @@ class Media:
             if self.save_raw_flag:
                 self.save_raw()
             self.save_subtitles()
-            logging.info(f"Generated subtitles for {self.path}")
         except Exception as e:
             logging.error(f"Failed to generate subtitles: {e}")
             raise RuntimeError(f"Failed to generate subtitles: {e}") from e
 
     def save_raw(self):
-        logging.info(f"Saving raw output for {self.path}")
+        logging.info("Saving raw output to .json ...")
         if self.subtitles is None:
             logging.error("No subtitles to save")
             raise RuntimeError("No subtitles to save")
@@ -238,10 +236,8 @@ class Media:
 
         with raw_output_path.open('w') as f:
             json.dump(self.subtitles, f, indent=4)
-        logging.info(f"Saved raw output for {self.path}")
 
     def save_subtitles(self):
-        logging.info(f"Saving subtitles for {self.path}")
         if self.subtitles is None:
             logging.error("No subtitles to save")
             raise RuntimeError("No subtitles to save")
@@ -253,7 +249,7 @@ class Media:
 
         output_path = self.path.stem + ".srt"
 
-        logging.info(f"Saving subtitles for {self.path} to {output_path}")
+        logging.info("Saving subtitles to .srt ...")
 
         try:
             srt_writer(
@@ -274,22 +270,30 @@ def setup_logging():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
 
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # Formatters
+    file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
     class ColorizedHandler(logging.StreamHandler):
-        COLORS = {logging.ERROR: ('\033[91m', '\033[0m')}
+        COLORS = {
+            logging.ERROR: ('\033[91m', '\033[0m'),  # Red
+            logging.WARNING: ('\033[93m', '\033[0m'),  # Yellow
+            logging.INFO: ('\033[92m', '\033[0m'),  # Green
+        }
 
-        def format(self, record):
+        def emit(self, record):
             color_prefix, color_suffix = self.COLORS.get(record.levelno, ('', ''))
+            original_msg = record.msg
             record.msg = f"{color_prefix}{record.msg}{color_suffix}"
-            return super().format(record)
+            super().emit(record)
+            record.msg = original_msg  # Reset to original to avoid affecting other handlers
 
     console_handler = ColorizedHandler()
-    console_handler.setFormatter(formatter)
+    console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
 
     file_handler = logging.FileHandler('pyscribe.log')
-    file_handler.setFormatter(formatter)
+    file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
 
 
@@ -321,6 +325,7 @@ if __name__ == "__main__":
 
     logging.info("This is an info message.")
     logging.error("This is an error message.")
+    logging.warning("This is a warning message.")
 
     config = Config()
     config.load('key.json')
